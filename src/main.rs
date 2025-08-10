@@ -36,12 +36,14 @@ enum Mode {
     Alternate,
     Bounce,
     FillEmpty,
+    Juggle,
+    Theater,
 }
 
 impl Mode {
     fn random_different_from(&self) -> Self {
         let mut rng = rand::thread_rng();
-        let modes = [Mode::Chase, Mode::Flash, Mode::MultiChase, Mode::Alternate, Mode::Bounce, Mode::FillEmpty];
+        let modes = [Mode::Chase, Mode::Flash, Mode::MultiChase, Mode::Alternate, Mode::Bounce, Mode::FillEmpty, Mode::Juggle, Mode::Theater];
         let available: Vec<_> = modes.iter().filter(|&&m| m != *self).copied().collect();
         available[rng.gen_range(0..available.len())]
     }
@@ -54,6 +56,8 @@ impl Mode {
             Mode::Alternate => "Alternate",
             Mode::Bounce => "Bounce",
             Mode::FillEmpty => "FillEmpty",
+            Mode::Juggle => "Juggle",
+            Mode::Theater => "Theater",
         }
     }
 }
@@ -110,6 +114,9 @@ fn run_animation(controller: &mut rs_ws281x::Controller, num_leds: i32, delay_ms
     let mut bounce_direction = 1;
     let mut fill_position = 0;
     let mut fill_is_filling = true;
+    let mut theater_offset = 0;
+    let mut juggle_positions = [0.0f32, 0.0f32, 0.0f32];
+    let mut juggle_velocities = [0.3f32, 0.5f32, 0.7f32];
     
     loop {
         // Check if it's time to switch modes
@@ -141,6 +148,12 @@ fn run_animation(controller: &mut rs_ws281x::Controller, num_leds: i32, delay_ms
             },
             Mode::FillEmpty => {
                 run_fill_empty_step(controller, num_leds, &mut fill_position, &mut fill_is_filling, warm_white)?;
+            },
+            Mode::Theater => {
+                run_theater_step(controller, num_leds, &mut theater_offset, warm_white)?;
+            },
+            Mode::Juggle => {
+                run_juggle_step(controller, num_leds, &mut juggle_positions, &mut juggle_velocities, warm_white)?;
             },
         }
         
@@ -275,6 +288,51 @@ fn run_fill_empty_step(controller: &mut rs_ws281x::Controller, num_leds: i32, po
     if *position >= num_leds {
         *is_filling = !*is_filling;
         *position = 0;
+    }
+    
+    Ok(())
+}
+
+fn run_theater_step(controller: &mut rs_ws281x::Controller, num_leds: i32, offset: &mut i32, color: [u8; 4]) -> Result<()> {
+    for i in 0..num_leds {
+        // Light only one pair at a time: (0,1), then (2,3), then (4,5), etc
+        let current_pair = *offset;
+        let pair_start = current_pair * 2;
+        let is_lit = i == pair_start || i == pair_start + 1;
+        
+        if is_lit {
+            controller.leds_mut(0)[i as usize] = color;
+        } else {
+            controller.leds_mut(0)[i as usize] = [0, 0, 0, 0];
+        }
+    }
+    
+    *offset = (*offset + 1) % (num_leds / 2);
+    Ok(())
+}
+
+fn run_juggle_step(controller: &mut rs_ws281x::Controller, num_leds: i32, positions: &mut [f32; 3], velocities: &mut [f32; 3], color: [u8; 4]) -> Result<()> {
+    // Clear all LEDs first
+    for i in 0..num_leds {
+        controller.leds_mut(0)[i as usize] = [0, 0, 0, 0];
+    }
+    
+    // Update and render each juggling ball
+    for i in 0..3 {
+        // Update position
+        positions[i] += velocities[i];
+        
+        // Bounce off walls
+        if positions[i] >= (num_leds - 1) as f32 || positions[i] <= 0.0 {
+            velocities[i] = -velocities[i];
+            positions[i] = positions[i].clamp(0.0, (num_leds - 1) as f32);
+        }
+        
+        // Light up the LED at this position
+        let led_index = positions[i].round() as usize;
+        if led_index < num_leds as usize {
+            controller.leds_mut(0)[led_index] = color;
+        }
     }
     
     Ok(())
