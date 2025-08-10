@@ -33,6 +33,9 @@ struct Cli {
 
     #[arg(long, default_value_t = 30)]
     mode_duration_secs: u64,
+
+    #[arg(long, default_value_t = false)]
+    big_leds: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, ValueEnum)]
@@ -135,7 +138,7 @@ async fn main() -> Result<()> {
         }
     });
 
-    run_animation(&mut controller, cli.num_leds, cli.delay_ms, cli.mode, cli.flipped, cli.mode_duration_secs, app_state)?;
+    run_animation(&mut controller, cli.num_leds, cli.delay_ms, cli.mode, cli.flipped, cli.mode_duration_secs, cli.big_leds, app_state)?;
 
     Ok(())
 }
@@ -172,13 +175,16 @@ fn flip_leds(leds: &mut [[u8; 4]], num_leds: i32) {
     }
 }
 
-fn run_animation(controller: &mut rs_ws281x::Controller, num_leds: i32, base_delay_ms: u64, initial_mode: Mode, initial_flipped: bool, mode_duration_secs: u64, app_state: Arc<Mutex<AppState>>) -> Result<()> {
+fn run_animation(controller: &mut rs_ws281x::Controller, num_leds: i32, base_delay_ms: u64, initial_mode: Mode, initial_flipped: bool, mode_duration_secs: u64, big_leds: bool, app_state: Arc<Mutex<AppState>>) -> Result<()> {
     println!("Starting LED animation with {} mode{}", initial_mode.name(), if initial_flipped { " (flipped)" } else { "" });
     
-    // Warm white color (B, G, R, W) - cozy orange-tinted white for RGB LEDs
-    let warm_white = [30, 170, 255, 0];
-    // On the big LEDs (B, R, G, W)
-    // let warm_white = [25, 255, 160, 0];
+    let warm_white = if big_leds {
+        // Big LEDs (B, R, G, W)
+        [25, 255, 160, 0]
+    } else {
+        // Small LEDs (B, G, R, W) - cozy orange-tinted white for RGB LEDs
+        [30, 170, 255, 0]
+    };
     
     let mut current_mode = initial_mode;
     let mut is_flipped = initial_flipped;

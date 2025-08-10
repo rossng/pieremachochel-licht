@@ -30,6 +30,11 @@ The application must be run with sudo due to GPIO access requirements:
 cargo build --release && sudo ./target/release/pm-licht
 ```
 
+## Options
+
+- `--big-leds`: Use color profile for big LEDs instead of small LEDs
+- `--mode-duration-secs <SECONDS>`: Time between mode switches (default: 30)
+
 ## Socket Control
 
 Control animation speed via Unix socket at `/tmp/pm-licht`:
