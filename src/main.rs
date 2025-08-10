@@ -2,8 +2,12 @@ use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use rand::Rng;
 use rs_ws281x::{ChannelBuilder, ControllerBuilder, StripType};
+use serde::{Deserialize, Serialize};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::net::{UnixListener, UnixStream};
 
 #[derive(Parser)]
 #[command(name = "pm-licht")]
@@ -18,7 +22,7 @@ struct Cli {
     #[arg(short, long, default_value_t = 255)]
     brightness: u8,
 
-    #[arg(short, long, default_value_t = 500)]
+    #[arg(short, long, default_value_t = 250)]
     delay_ms: u64,
 
     #[arg(short, long, value_enum, default_value = "flash")]
@@ -26,6 +30,9 @@ struct Cli {
 
     #[arg(short, long, default_value_t = false)]
     flipped: bool,
+
+    #[arg(long, default_value_t = 30)]
+    mode_duration_secs: u64,
 }
 
 #[derive(Clone, Copy, PartialEq, ValueEnum)]
@@ -62,7 +69,28 @@ impl Mode {
     }
 }
 
-fn main() -> Result<()> {
+#[derive(Deserialize, Serialize, Debug)]
+struct IpcCommand {
+    command: Vec<serde_json::Value>,
+}
+
+#[derive(Clone)]
+struct AppState {
+    speed: f64,
+}
+
+impl AppState {
+    fn new() -> Self {
+        Self { speed: 1.0 }
+    }
+    
+    fn get_delay_ms(&self, base_delay_ms: u64) -> u64 {
+        (base_delay_ms as f64 / self.speed) as u64
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     let mut controller = ControllerBuilder::new()
@@ -79,8 +107,58 @@ fn main() -> Result<()> {
         )
         .build()?;
 
-    run_animation(&mut controller, cli.num_leds, cli.delay_ms, cli.mode, cli.flipped)?;
+    let app_state = Arc::new(Mutex::new(AppState::new()));
+    
+    let socket_path = "/tmp/pm-licht";
+    if std::path::Path::new(socket_path).exists() {
+        std::fs::remove_file(socket_path)?;
+    }
+    
+    let listener = UnixListener::bind(socket_path)?;
+    let state_clone = Arc::clone(&app_state);
+    
+    tokio::spawn(async move {
+        loop {
+            match listener.accept().await {
+                Ok((stream, _)) => {
+                    let state = Arc::clone(&state_clone);
+                    tokio::spawn(async move {
+                        if let Err(e) = handle_client(stream, state).await {
+                            eprintln!("Error handling client: {}", e);
+                        }
+                    });
+                }
+                Err(e) => {
+                    eprintln!("Error accepting connection: {}", e);
+                }
+            }
+        }
+    });
 
+    run_animation(&mut controller, cli.num_leds, cli.delay_ms, cli.mode, cli.flipped, cli.mode_duration_secs, app_state)?;
+
+    Ok(())
+}
+
+async fn handle_client(stream: UnixStream, state: Arc<Mutex<AppState>>) -> Result<()> {
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    
+    while reader.read_line(&mut line).await? > 0 {
+        if let Ok(cmd) = serde_json::from_str::<IpcCommand>(&line.trim()) {
+            if cmd.command.len() >= 3 
+                && cmd.command[0].as_str() == Some("set_property") 
+                && cmd.command[1].as_str() == Some("speed") {
+                if let Some(speed_value) = cmd.command[2].as_f64() {
+                    let mut app_state = state.lock().unwrap();
+                    app_state.speed = speed_value;
+                    println!("Speed set to: {}", speed_value);
+                }
+            }
+        }
+        line.clear();
+    }
+    
     Ok(())
 }
 
@@ -94,7 +172,7 @@ fn flip_leds(leds: &mut [[u8; 4]], num_leds: i32) {
     }
 }
 
-fn run_animation(controller: &mut rs_ws281x::Controller, num_leds: i32, delay_ms: u64, initial_mode: Mode, initial_flipped: bool) -> Result<()> {
+fn run_animation(controller: &mut rs_ws281x::Controller, num_leds: i32, base_delay_ms: u64, initial_mode: Mode, initial_flipped: bool, mode_duration_secs: u64, app_state: Arc<Mutex<AppState>>) -> Result<()> {
     println!("Starting LED animation with {} mode{}", initial_mode.name(), if initial_flipped { " (flipped)" } else { "" });
     
     // Warm white color (B, G, R, W) - cozy orange-tinted white for RGB LEDs
@@ -104,7 +182,7 @@ fn run_animation(controller: &mut rs_ws281x::Controller, num_leds: i32, delay_ms
     
     let mut current_mode = initial_mode;
     let mut is_flipped = initial_flipped;
-    let mode_duration = Duration::from_secs(30);
+    let mode_duration = Duration::from_secs(mode_duration_secs);
     let mut mode_start = Instant::now();
     
     let mut chase_position = 0;
@@ -163,7 +241,13 @@ fn run_animation(controller: &mut rs_ws281x::Controller, num_leds: i32, delay_ms
         }
         
         controller.render()?;
-        thread::sleep(Duration::from_millis(delay_ms));
+        
+        let current_delay = {
+            let state = app_state.lock().unwrap();
+            state.get_delay_ms(base_delay_ms)
+        };
+        
+        thread::sleep(Duration::from_millis(current_delay));
     }
 }
 

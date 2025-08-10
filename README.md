@@ -1,13 +1,12 @@
 # PM-Licht LED Controller
 
-A simple Rust application to control WS2812/NeoPixel LED strips connected to Raspberry Pi GPIO pins with a chase animation.
+A simple Rust application to control WS2812/NeoPixel LED strips connected to Raspberry Pi GPIO pins with a circus theme.
 
 ## Prerequisites
 
 - Raspberry Pi 4 Model B (or compatible)
 - WS2812/NeoPixel LED strip
-- Proper power supply for LEDs (5V, sufficient current)
-- Level shifter (recommended for 3.3V to 5V signal conversion)
+- Proper power supply for LEDs (12V, sufficient current)
 
 ## Hardware Setup
 
@@ -20,6 +19,7 @@ A simple Rust application to control WS2812/NeoPixel LED strips connected to Ras
 
 ```
 sudo apt install libclang-dev
+sudo apt install socat
 ```
 
 ## Running
@@ -28,4 +28,16 @@ The application must be run with sudo due to GPIO access requirements:
 
 ```bash
 cargo build --release && sudo ./target/release/pm-licht
+```
+
+## Socket Control
+
+Control animation speed via Unix socket at `/tmp/pm-licht`:
+
+```bash
+# Set speed to 1.5x (180 BPM from default 120 BPM)
+echo '{ "command": ["set_property", "speed", 1.5] }' | socat - /tmp/pm-licht
+
+# Set speed to 0.5x (60 BPM)
+echo '{ "command": ["set_property", "speed", 0.5] }' | socat - /tmp/pm-licht
 ```
