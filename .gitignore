@@ -1,5 +1,5 @@
 # Rust
-/target/
+target/
 **/*.rs.bk
 *.pdb
 
@@ -39,3 +39,4 @@ Thumbs.db
 /build/
 /dist/
 /out/
+mutagen.yml.lock

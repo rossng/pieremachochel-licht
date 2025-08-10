@@ -1,0 +1,13 @@
+sync:
+  defaults:
+    flushOnCreate: true
+    ignore:
+      vcs: true
+  code:
+    alpha: "."
+    beta: "rpi-pm.local:/home/pi/pm-licht"
+    ignore:
+      paths:
+        - "target"
+        - ".github"
+        - "neopixel-controller/target"

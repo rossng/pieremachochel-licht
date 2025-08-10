@@ -1,5 +1,5 @@
 [package]
-name = "neopixel-controller"
+name = "pm-licht"
 version = "0.1.0"
 edition = "2021"
 
@@ -7,3 +7,4 @@ edition = "2021"
 rs_ws281x = "0.5"
 anyhow = "1.0"
 clap = { version = "4.0", features = ["derive"] }
+rand = "0.8"
