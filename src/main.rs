@@ -23,6 +23,9 @@ struct Cli {
 
     #[arg(short, long, value_enum, default_value = "flash")]
     mode: Mode,
+
+    #[arg(short, long, default_value_t = false)]
+    flipped: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, ValueEnum)]
@@ -32,12 +35,13 @@ enum Mode {
     MultiChase,
     Alternate,
     Bounce,
+    FillEmpty,
 }
 
 impl Mode {
     fn random_different_from(&self) -> Self {
         let mut rng = rand::thread_rng();
-        let modes = [Mode::Chase, Mode::Flash, Mode::MultiChase, Mode::Alternate, Mode::Bounce];
+        let modes = [Mode::Chase, Mode::Flash, Mode::MultiChase, Mode::Alternate, Mode::Bounce, Mode::FillEmpty];
         let available: Vec<_> = modes.iter().filter(|&&m| m != *self).copied().collect();
         available[rng.gen_range(0..available.len())]
     }
@@ -49,6 +53,7 @@ impl Mode {
             Mode::MultiChase => "MultiChase",
             Mode::Alternate => "Alternate",
             Mode::Bounce => "Bounce",
+            Mode::FillEmpty => "FillEmpty",
         }
     }
 }
@@ -70,13 +75,23 @@ fn main() -> Result<()> {
         )
         .build()?;
 
-    run_animation(&mut controller, cli.num_leds, cli.delay_ms, cli.mode)?;
+    run_animation(&mut controller, cli.num_leds, cli.delay_ms, cli.mode, cli.flipped)?;
 
     Ok(())
 }
 
-fn run_animation(controller: &mut rs_ws281x::Controller, num_leds: i32, delay_ms: u64, initial_mode: Mode) -> Result<()> {
-    println!("Starting LED animation with {} mode", initial_mode.name());
+fn flip_leds(leds: &mut [[u8; 4]], num_leds: i32) {
+    let mut temp = vec![[0u8; 4]; num_leds as usize];
+    for i in 0..num_leds {
+        temp[(num_leds - 1 - i) as usize] = leds[i as usize];
+    }
+    for i in 0..num_leds {
+        leds[i as usize] = temp[i as usize];
+    }
+}
+
+fn run_animation(controller: &mut rs_ws281x::Controller, num_leds: i32, delay_ms: u64, initial_mode: Mode, initial_flipped: bool) -> Result<()> {
+    println!("Starting LED animation with {} mode{}", initial_mode.name(), if initial_flipped { " (flipped)" } else { "" });
     
     // Warm white color (B, G, R, W) - cozy orange-tinted white for RGB LEDs
     let warm_white = [30, 170, 255, 0];
@@ -84,6 +99,7 @@ fn run_animation(controller: &mut rs_ws281x::Controller, num_leds: i32, delay_ms
     // let warm_white = [25, 255, 160, 0];
     
     let mut current_mode = initial_mode;
+    let mut is_flipped = initial_flipped;
     let mode_duration = Duration::from_secs(30);
     let mut mode_start = Instant::now();
     
@@ -92,13 +108,18 @@ fn run_animation(controller: &mut rs_ws281x::Controller, num_leds: i32, delay_ms
     let mut alternate_state = false;
     let mut bounce_position = 0;
     let mut bounce_direction = 1;
+    let mut fill_position = 0;
+    let mut fill_is_filling = true;
     
     loop {
         // Check if it's time to switch modes
         if mode_start.elapsed() >= mode_duration {
             current_mode = current_mode.random_different_from();
+            // Randomly decide whether to flip the new mode
+            let mut rng = rand::thread_rng();
+            is_flipped = rng.gen_bool(0.5);
             mode_start = Instant::now();
-            println!("Switching to {} mode", current_mode.name());
+            println!("Switching to {} mode{}", current_mode.name(), if is_flipped { " (flipped)" } else { "" });
         }
         
         // Run the appropriate mode
@@ -118,6 +139,14 @@ fn run_animation(controller: &mut rs_ws281x::Controller, num_leds: i32, delay_ms
             Mode::Bounce => {
                 run_bounce_step(controller, num_leds, &mut bounce_position, &mut bounce_direction, warm_white)?;
             },
+            Mode::FillEmpty => {
+                run_fill_empty_step(controller, num_leds, &mut fill_position, &mut fill_is_filling, warm_white)?;
+            },
+        }
+        
+        // Apply flipping if enabled
+        if is_flipped {
+            flip_leds(controller.leds_mut(0), num_leds);
         }
         
         controller.render()?;
@@ -216,6 +245,36 @@ fn run_bounce_step(controller: &mut rs_ws281x::Controller, num_leds: i32, positi
     if *position >= max_position || *position < 0 {
         *direction = -*direction;
         *position += *direction;
+    }
+    
+    Ok(())
+}
+
+fn run_fill_empty_step(controller: &mut rs_ws281x::Controller, num_leds: i32, position: &mut i32, is_filling: &mut bool, color: [u8; 4]) -> Result<()> {
+    for i in 0..num_leds {
+        if *is_filling {
+            // When filling, light up all LEDs from 0 to position (inclusive)
+            if i <= *position {
+                controller.leds_mut(0)[i as usize] = color;
+            } else {
+                controller.leds_mut(0)[i as usize] = [0, 0, 0, 0];
+            }
+        } else {
+            // When emptying, turn off LEDs from 0 to position (inclusive)
+            if i <= *position {
+                controller.leds_mut(0)[i as usize] = [0, 0, 0, 0];
+            } else {
+                controller.leds_mut(0)[i as usize] = color;
+            }
+        }
+    }
+    
+    *position += 1;
+    
+    // When we reach the end, switch between filling and emptying
+    if *position >= num_leds {
+        *is_filling = !*is_filling;
+        *position = 0;
     }
     
     Ok(())
